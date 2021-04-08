@@ -1,0 +1,307 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'image-processing-workflow
+
+  Sample SAM Template for image-processing-workflow
+
+  '
+Globals:
+  Function:
+    Timeout: 3
+Parameters:
+  RekognitionCollectionID:
+    AllowedPattern: '[a-zA-Z0-9_.-]+'
+    Default: rider-photos
+    Description: ID for the Rekognition collection used to index faces
+    MaxLength: 255
+    MinLength: 1
+    Type: String
+Resources:
+  ImageMagick:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:us-east-1:145266761615:applications/image-magick-lambda-layer
+        SemanticVersion: 1.0.0
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: app.handler
+      Runtime: nodejs12.x
+      Timeout: 60
+      MemorySize: 256
+      Tracing: Active
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Action:
+          - rekognition:DetectFaces
+          Effect: Allow
+          Resource: '*'
+          Sid: RekognitionFace
+  FaceSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: FaceSearchFunction
+      Description: Use Amazon Rekognition to check if the face is already in the collection
+      Environment:
+        Variables:
+          REKOGNITION_COLLECTION_ID:
+            Ref: RekognitionCollectionID
+      Handler: app.handler
+      MemorySize: 256
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Action:
+          - rekognition:SearchFacesByImage
+          Effect: Allow
+          Resource: '*'
+          Sid: SearchFace
+      Runtime: nodejs10.x
+      Timeout: 60
+  NotificationPlaceholderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: NotificationPlaceholderFunction
+      Description: mock notification sender
+      Handler: app.handler
+      MemorySize: 256
+      Runtime: nodejs10.x
+      Timeout: 60
+  PersistMetadataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: PersistMetadataFunction
+      Description: Save metadata of the photo to DynamoDB table
+      Environment:
+        Variables:
+          RIDER_PHOTOS_DDB_TABLE:
+            Ref: RiderPhotoDDBTable
+      Handler: app.handler
+      MemorySize: 256
+      Policies:
+        Statement:
+        - Action:
+          - dynamodb:PutItem
+          Effect: Allow
+          Resource:
+            Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${RiderPhotoDDBTable}
+          Sid: WriteToRiderPhotoDDBTable
+      Runtime: nodejs10.x
+      Timeout: 60
+  IndexFaceFunction:
+    Properties:
+      Description: Index the photo into Rekognition collection
+      Handler: app.handler
+      Runtime: nodejs10.x
+      MemorySize: 256
+      Timeout: 60
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Sid: SearchFace
+          Effect: Allow
+          Action:
+          - rekognition:IndexFaces
+          Resource: '*'
+      CodeUri: IndexFaceFunction
+      Environment:
+        Variables:
+          REKOGNITION_COLLECTION_ID:
+            Ref: RekognitionCollectionID
+    Type: AWS::Serverless::Function
+  ThumbnailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs10.x
+      MemorySize: 1536
+      Timeout: 300
+      Policies:
+        Statement:
+        - Sid: WritetoS3ThumbnailBucket
+          Effect: Allow
+          Action:
+          - s3:PutObject
+          Resource:
+            Fn::Sub: arn:aws:s3:::${ThumbnailS3Bucket}/*
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+      CodeUri: ThumbnailFunction
+      Environment:
+        Variables:
+          THUMBNAIL_BUCKET:
+            Ref: ThumbnailS3Bucket
+          MAX_WIDTH: 300
+          MAX_HEIGHT: 300
+      Layers:
+      - Fn::GetAtt:
+        - ImageMagick
+        - Outputs.LayerVersion
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent10Minutes
+  RiderPhotoDDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: Username
+        AttributeType: S
+      KeySchema:
+      - AttributeName: Username
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '3'
+        WriteCapacityUnits: '3'
+  RiderPhotoS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - '*'
+          AllowedMethods:
+          - PUT
+          - GET
+          - POST
+          - HEAD
+          AllowedOrigins:
+          - '*'
+          ExposedHeaders:
+          - ETag
+  ThumbnailS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - '*'
+          AllowedMethods:
+          - PUT
+          - GET
+          - POST
+          - HEAD
+          AllowedOrigins:
+          - '*'
+          ExposedHeaders:
+          - ETag
+  SAMLogs:
+    Type: AWS::Logs::LogGroup
+  ApiforSyncWF:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: ../../api.yaml
+  ImageWorkflowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Logging:
+        Destinations:
+        - CloudWatchLogsLogGroup:
+            LogGroupArn:
+              Fn::GetAtt:
+              - SAMLogs
+              - Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Tracing:
+        Enabled: true
+      Type: EXPRESS
+      DefinitionUri: ../../statemachine/imageworkflow.asl.json
+      DefinitionSubstitutions:
+        HelloWorldFunctionArn:
+          Fn::GetAtt:
+          - HelloWorldFunction
+          - Arn
+        NotificationPlaceholderFunctionArn:
+          Fn::GetAtt:
+          - NotificationPlaceholderFunction
+          - Arn
+        FaceSearchFunctionArn:
+          Fn::GetAtt:
+          - FaceSearchFunction
+          - Arn
+        IndexFaceFunctionArn:
+          Fn::GetAtt:
+          - IndexFaceFunction
+          - Arn
+        ThumbnailFunctionArn:
+          Fn::GetAtt:
+          - ThumbnailFunction
+          - Arn
+      Policies:
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: HelloWorldFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: FaceSearchFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: NotificationPlaceholderFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: PersistMetadataFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: IndexFaceFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: ThumbnailFunction
+      - CloudWatchLogsFullAccess
+  HttpApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: AllowSFNExec
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: states:StartSyncExecution
+            Resource:
+              Fn::GetAtt:
+              - ImageWorkflowStateMachine
+              - Arn
+Outputs:
+  HelloWorldFunction:
+    Description: Hello World Lambda Function ARN
+    Value:
+      Fn::GetAtt:
+      - HelloWorldFunction
+      - Arn
+  HelloWorldFunctionIamRole:
+    Description: Implicit IAM Role created for Hello World function
+    Value:
+      Fn::GetAtt:
+      - HelloWorldFunctionRole
+      - Arn

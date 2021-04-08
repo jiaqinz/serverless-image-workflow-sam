@@ -1,0 +1,301 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  image-processing-workflow
+
+  Sample SAM Template for image-processing-workflow
+  
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+Parameters:
+  RekognitionCollectionID:
+    AllowedPattern: '[a-zA-Z0-9_.-]+'
+    Default: rider-photos
+    Description: ID for the Rekognition collection used to index faces
+    MaxLength: 255
+    MinLength: 1
+    Type: String
+
+Resources:
+  ImageMagick:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:us-east-1:145266761615:applications/image-magick-lambda-layer
+        SemanticVersion: 1.0.0
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: hello-world/
+      Handler: app.handler
+      Runtime: nodejs12.x
+      Timeout: 60
+      MemorySize: 256
+      Tracing: Active
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Action:
+          - rekognition:DetectFaces
+          Effect: Allow
+          Resource: '*'
+          Sid: RekognitionFace
+  FaceSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: face_search_function/
+      Description: Use Amazon Rekognition to check if the face is already in the collection
+      Environment:
+        Variables:
+          REKOGNITION_COLLECTION_ID:
+            Ref: RekognitionCollectionID
+      Handler: app.handler
+      MemorySize: 256
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Action:
+          - rekognition:SearchFacesByImage
+          Effect: Allow
+          Resource: '*'
+          Sid: SearchFace
+      Runtime: nodejs10.x
+      Timeout: 60
+  NotificationPlaceholderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: notification_placeholder
+      Description: mock notification sender
+      Handler: app.handler
+      MemorySize: 256
+      Runtime: nodejs10.x
+      Timeout: 60
+  PersistMetadataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: persist_metadata
+      Description: Save metadata of the photo to DynamoDB table
+      Environment:
+        Variables:
+          RIDER_PHOTOS_DDB_TABLE:
+            Ref: RiderPhotoDDBTable
+      Handler: app.handler
+      MemorySize: 256
+      Policies:
+        Statement:
+        - Action:
+          - dynamodb:PutItem
+          Effect: Allow
+          Resource:
+            Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${RiderPhotoDDBTable}
+          Sid: WriteToRiderPhotoDDBTable
+      Runtime: nodejs10.x
+      Timeout: 60
+  IndexFaceFunction:
+    Properties:
+      Description: "Index the photo into Rekognition collection"
+      Handler: app.handler
+      Runtime: nodejs10.x
+      MemorySize: 256
+      Timeout: 60
+      Policies:
+        Statement:
+          - Action:
+            - s3:GetObject
+            Effect: Allow
+            Resource: '*'
+            Sid: ReadFromS3Bucket
+          -
+            Sid: "SearchFace"
+            Effect: Allow
+            Action:
+              - rekognition:IndexFaces
+            Resource: "*"
+      CodeUri: index_face
+      Environment:
+        Variables:
+          REKOGNITION_COLLECTION_ID: !Ref RekognitionCollectionID
+    Type: AWS::Serverless::Function
+  ThumbnailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: nodejs10.x
+      MemorySize: 1536
+      Timeout: 300
+      Policies:
+        Statement:
+          -
+            Sid: "WritetoS3ThumbnailBucket"
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${ThumbnailS3Bucket}/*"
+          - Action:
+            - s3:GetObject
+            Effect: Allow
+            Resource: '*'
+            Sid: ReadFromS3Bucket
+      CodeUri: thumbnail
+      Environment:
+        Variables:
+          THUMBNAIL_BUCKET: !Ref ThumbnailS3Bucket
+          MAX_WIDTH: 300
+          MAX_HEIGHT: 300
+      Layers:
+        - !GetAtt ImageMagick.Outputs.LayerVersion
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent10Minutes 
+        #Alarms:
+         # A list of alarms that you want to monitor
+         #- !Ref AliasErrorMetricGreaterThanZeroAlarm
+         #- !Ref LatestVersionErrorMetricGreaterThanZeroAlarm
+        #Hooks:
+         # Validation Lambda functions that are run before & after traffic shifting
+          #PreTraffic: !Ref PreTrafficLambdaFunction
+          #PostTraffic: !Ref PostTrafficLambdaFunction
+  RiderPhotoDDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: Username
+        AttributeType: S
+      KeySchema:
+      - AttributeName: Username
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '3'
+        WriteCapacityUnits: '3'
+  RiderPhotoS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+          -
+            AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+              - GET
+              - POST
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            ExposedHeaders:
+              - ETag
+  ThumbnailS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+          -
+            AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+              - GET
+              - POST
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            ExposedHeaders:
+              - ETag
+      
+  SAMLogs:
+    Type: AWS::Logs::LogGroup
+    
+  ApiforSyncWF:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: 'api.yaml'
+
+  ImageWorkflowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Logging:
+        Destinations: 
+          - CloudWatchLogsLogGroup:  
+              LogGroupArn: !GetAtt SAMLogs.Arn
+        IncludeExecutionData: True
+        Level: ALL
+      Tracing:
+        Enabled: true
+      Type: EXPRESS
+      DefinitionUri: statemachine/imageworkflow.asl.json
+      DefinitionSubstitutions:
+        HelloWorldFunctionArn: !GetAtt HelloWorldFunction.Arn   
+        NotificationPlaceholderFunctionArn: !GetAtt NotificationPlaceholderFunction.Arn
+        FaceSearchFunctionArn: !GetAtt FaceSearchFunction.Arn
+        IndexFaceFunctionArn: !GetAtt IndexFaceFunction.Arn
+        ThumbnailFunctionArn: !GetAtt ThumbnailFunction.Arn
+      Policies: # Find out more about SAM policy templates: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-templates.html
+        - LambdaInvokePolicy:
+            FunctionName: !Ref HelloWorldFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FaceSearchFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationPlaceholderFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PersistMetadataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref IndexFaceFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ThumbnailFunction
+        - CloudWatchLogsFullAccess
+#      Events:
+#        HttpGet:
+#          Type: Api
+#          Properties:
+#            Path: '/workflow/detectface'
+#            Method: post
+#            RestApiId:
+#              Ref: ApiforSyncWF
+
+  HttpApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSFNExec
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: "states:StartSyncExecution"
+              Resource: !GetAtt ImageWorkflowStateMachine.Arn  
+       
+
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt HelloWorldFunctionRole.Arn

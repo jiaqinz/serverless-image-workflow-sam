@@ -1,0 +1,68 @@
+{
+	"Comment": "Rider photo processing workflow",
+	"StartAt": "FaceDetection",
+	"States": {
+		"FaceDetection": {
+			"Type": "Task",
+			"Resource": "${HelloWorldFunctionArn}",
+			"ResultPath": "$.detectedFaceDetails",
+			"Next": "CheckFaceDuplicate",
+			"Catch": [
+				{
+					"ErrorEquals": [
+						"PhotoDoesNotMeetRequirementError"
+					],
+					"ResultPath": "$.errorInfo",
+					"Next": "PhotoDoesNotMeetRequirement"
+				}
+			]
+		},
+		"PhotoDoesNotMeetRequirement": {
+			"Type": "Task",
+			"Resource": "${NotificationPlaceholderFunctionArn}",
+			"End": true
+		},
+		"CheckFaceDuplicate": {
+		"Type": "Task",
+		"Resource": "${FaceSearchFunctionArn}",
+		"ResultPath": null,
+		"Next": "ParallelProcessing",
+		"Catch": [
+			{
+				"ErrorEquals": [
+					"FaceAlreadyExistsError"
+				],
+				"ResultPath": "$.errorInfo",
+				"Next": "PhotoDoesNotMeetRequirement"
+			}
+		]
+		},
+		"ParallelProcessing": {
+			"Type": "Parallel",
+			"Branches": [
+				{
+					"StartAt": "AddFaceToIndex",
+					"States": {
+						"AddFaceToIndex": {
+							"Type": "Task",
+							"Resource": "${IndexFaceFunctionArn}",
+							"End": true
+						}
+					}
+				},
+				{
+					"StartAt": "Thumbnail",
+					"States": {
+						"Thumbnail": {
+							"Type": "Task",
+							"Resource": "${ThumbnailFunctionArn}",
+							"End": true
+						}
+					}
+				}
+			],
+			"ResultPath": "$.parallelResult",
+			"End": true
+		}	
+	}
+}	

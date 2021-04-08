@@ -1,0 +1,4 @@
+{ "userId": "user_a",
+  "s3Bucket": "fabtan-cloudfront-singapore",
+  "s3Key": "fabphoto.jpg"
+}

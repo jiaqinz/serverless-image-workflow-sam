@@ -1,0 +1,34 @@
+{ userId: 'user_a',
+  s3Bucket: 'fabtan-cloudfront-singapore',
+  s3Key: 'fabphoto.jpg',
+  detectedFaceDetails:
+   { BoundingBox:
+      { Width: 0.19891540706157684,
+        Height: 0.20772460103034973,
+        Left: 0.4309091866016388,
+        Top: 0.36015650629997253 },
+     AgeRange: { Low: 22, High: 34 },
+     Smile: { Value: true, Confidence: 99.96795654296875 },
+     Eyeglasses: { Value: false, Confidence: 99.88754272460938 },
+     Sunglasses: { Value: false, Confidence: 99.98023986816406 },
+     Gender: { Value: 'Male', Confidence: 98.06815338134766 },
+     Beard: { Value: false, Confidence: 78.6260986328125 },
+     Mustache: { Value: false, Confidence: 98.46276092529297 },
+     EyesOpen: { Value: true, Confidence: 98.95408630371094 },
+     MouthOpen: { Value: true, Confidence: 99.85790252685547 },
+     Emotions:
+      [ { Type: 'HAPPY', Confidence: 99.80946350097656 },
+        { Type: 'SURPRISED', Confidence: 0.16367889940738678 },
+        { Type: 'ANGRY', Confidence: 0.009352519176900387 },
+        { Type: 'FEAR', Confidence: 0.005920963361859322 },
+        { Type: 'CONFUSED', Confidence: 0.004428256768733263 },
+        { Type: 'DISGUSTED', Confidence: 0.003364416304975748 },
+        { Type: 'CALM', Confidence: 0.0021662123035639524 },
+        { Type: 'SAD', Confidence: 0.0016239365795627236 } ],
+     Pose:
+      { Roll: 5.547286033630371,
+        Yaw: 5.797859191894531,
+        Pitch: 7.6410722732543945 },
+     Quality:
+      { Brightness: 81.57984924316406, Sharpness: 86.86019134521484 },
+     Confidence: 99.99849700927734 } }

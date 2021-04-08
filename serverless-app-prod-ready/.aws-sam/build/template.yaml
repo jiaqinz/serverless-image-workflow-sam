@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'image-processing-workflow
+
+  Sample SAM Template for image-processing-workflow
+
+  '
+Globals:
+  Function:
+    Timeout: 3
+Resources:
+  FaceDetectionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: FaceDetectionFunction
+      Handler: app.handler
+      Runtime: nodejs12.x
+      Timeout: 60
+      MemorySize: 256
+      Tracing: Active
+      Policies:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: '*'
+          Sid: ReadFromS3Bucket
+        - Action:
+          - rekognition:DetectFaces
+          Effect: Allow
+          Resource: '*'
+          Sid: RekognitionFace
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent10Minutes
+  LambdaLogs:
+    Type: AWS::Logs::LogGroup
+Outputs:
+  HelloWorldFunction:
+    Description: Hello World Lambda Function ARN
+    Value:
+      Fn::GetAtt:
+      - FaceDetectionFunction
+      - Arn
+  HelloWorldFunctionIamRole:
+    Description: Implicit IAM Role created for Hello World function
+    Value:
+      Fn::GetAtt:
+      - FaceDetectionFunctionRole
+      - Arn
